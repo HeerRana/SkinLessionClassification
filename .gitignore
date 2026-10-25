@@ -1,0 +1,9 @@
+# Large HAM10000 dataset
+HAM10000_images_part_1/
+HAM10000_images_part_2/
+# PyTorch model checkpoints
+*.pth
+*.pt
+# Research notes and logs
+REVISION_PLAN.md
+task10_log.txt
