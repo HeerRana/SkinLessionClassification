@@ -7,3 +7,5 @@ HAM10000_images_part_2/
 # Research notes and logs
 REVISION_PLAN.md
 task10_log.txt
+# Scratch scripts
+_*.py

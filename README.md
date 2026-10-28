@@ -1,345 +1,183 @@
-# Skin Lesion Classification
+# 🔬 Skin Lesion Classification: ResNet-50 vs. Vision Transformer (ViT)
 
-A deep-learning project for classifying dermoscopic skin-lesion images into seven diagnostic categories using the HAM10000 dataset.
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![TIMM](https://img.shields.io/badge/timm-0.9+-blue.svg)](https://github.com/huggingface/pytorch-image-models)
+[![Dataset: HAM10000](https://img.shields.io/badge/Dataset-HAM10000-green.svg)](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/DBW86T)
 
-The project compares transfer-learning approaches based on **ResNet50** and **ViT-B/16**, while investigating class imbalance, lesion-level data splitting, image preprocessing, melanoma recall, and macro F1 score.
+An empirical deep-learning study evaluating **Convolutional Neural Networks (ResNet-50)** against **Vision Transformers (ViT-B/16)** on the 7-class **HAM10000** dermoscopic skin cancer dataset (10,015 images).
 
-> **Medical disclaimer:** This project is intended for research and educational purposes only. It is not a medical device, diagnostic system, or substitute for evaluation by a qualified healthcare professional.
+> **Medical Disclaimer:** This project is intended strictly for research and educational purposes. It is not a certified medical device, diagnostic system, or substitute for professional clinical dermatological evaluation.
 
-## Features
+---
 
-- Seven-class skin-lesion classification.
-- Lesion-level train, validation, and test splitting.
-- ResNet50 and ViT-B/16 model comparison.
-- Image augmentation and ImageNet normalization.
-- Class balancing using `WeightedRandomSampler`.
-- Optional CLAHE enhancement and hair-artifact removal.
-- Evaluation using accuracy, balanced accuracy, macro F1, and melanoma recall.
-- Model checkpoints selected using validation macro F1.
+## 📌 Executive Summary & Key Results
 
-## Supported Classes
+When benchmarked under an identical, clinically valid protocol (zero patient/lesion leakage, class-balanced sampling, and fair optimization schedules), the **Vision Transformer (ViT-B/16) decisively outperforms ResNet-50** across every diagnostic metric on the official test set (1,502 images):
 
-| Label | Description | Class ID |
-|---|---|---:|
-| `nv` | Melanocytic nevi | 0 |
-| `mel` | Melanoma | 1 |
-| `bkl` | Benign keratosis-like lesions | 2 |
-| `bcc` | Basal cell carcinoma | 3 |
-| `akiec` | Actinic keratoses / intraepithelial carcinoma | 4 |
-| `vasc` | Vascular lesions | 5 |
-| `df` | Dermatofibroma | 6 |
+| Architecture | Checkpoint | Test Accuracy | Balanced Accuracy | Macro F1 | Melanoma Recall | Melanoma AP | Model Size | GPU Latency |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **ResNet-50** | `best_resnet_sampler.pth` | 80.69% | 70.99% | 0.7095 | 46.71% | 0.5836 | **89.7 MB** | 31.85 ms |
+| **ViT-B/16** | `best_vit_fair.pth` | **85.55%** | **74.52%** | **0.7632** | **60.48%** | **0.6348** | 327.3 MB | **24.92 ms** |
 
-## Repository Structure
+---
 
-```text
-.
-├── _run_task10.py       # Preprocessing ablation and model comparison
-├── _run_vit.py          # ViT data pipeline and training script
-├── _task10_cell.py      # Preprocessing and training experiment code
-├── skincancer.ipynb     # Original notebook experiments
-├── skincancer_v2.ipynb  # Revised end-to-end experiment notebook
-├── data/                # Local data directory
-└── results/             # Local experiment results
+## 🎯 Supported Diagnostic Classes
+
+The dataset consists of 10,015 images spanning 7 lesion types with severe class imbalance (**58.3 : 1** ratio):
+
+| Label | Diagnosis | Description | Images | Dataset Share |
+|:---:|---|---|:---:|:---:|
+| `nv` | Melanocytic nevi | Common benign mole | 6,705 | 66.95% |
+| `mel` | **Melanoma** | **Malignant, life-threatening skin cancer** | 1,113 | 11.11% |
+| `bkl` | Benign keratosis | Seborrheic keratoses, solar lentigines | 1,099 | 10.97% |
+| `bcc` | **Basal cell carcinoma** | Malignant epithelial cancer | 514 | 5.13% |
+| `akiec` | Actinic keratoses | Pre-cancerous / Bowen's disease | 327 | 3.26% |
+| `vasc` | Vascular lesions | Cherry angiomas, angiokeratomas | 142 | 1.42% |
+| `df` | Dermatofibroma | Benign fibrous skin lesion | 115 | 1.15% |
+
+---
+
+## 🔄 Project Evolution: Version 1 vs. Version 2
+
+This project underwent a major methodological overhaul from an initial baseline exploration (`skincancer.ipynb`) to a rigorous, leak-free benchmark (`skincancer_v2.ipynb`):
+
+```
+Version 1 (Initial Prototype)              Version 2 (Rigorous Benchmark)
+├── Random Image-level Split               ├── Lesion-level Stratified Split (0% Leakage)
+├── Heavy Blur / CLAHE / Hair Inpainting   ├── Clean Images + Real-time Color Jitter
+├── Plain Adam / No LR Warmup for ViT      ├── AdamW + 3-epoch Warmup + Cosine Annealing
+├── Ignored Class Skew in Evaluation       ├── WeightedRandomSampler + Label Smoothing (0.1)
+└── Relied on Deceptive Overall Accuracy   └── Evaluated on Macro F1, Melanoma Recall & AP
 ```
 
-Large datasets, model checkpoints, and experiment logs are excluded from version control. See `.gitignore` for the current exclusions.
+### 🚨 Critical Discoveries in Version 1:
+1. **Lesion-Level Data Leakage:** The HAM10000 dataset contains 10,015 images originating from **7,470 unique physical lesions** (many lesions were photographed multiple times). Random image splitting allowed images of the *same lesion* to appear in both train and test splits, artificially inflating scores.
+2. **The "Accuracy Paradox":** Because 67% of the images are benign moles (`nv`), a dummy model predicting "mole" every time would score 67% accuracy. In Version 1, high accuracy (~84%) masked the reality that **over 50% of lethal melanomas were missed**!
+3. **Over-Processing Degradation:** Heavy classical image processing (Gaussian blur and morphological hair inpainting) unintentionally smudged the delicate honeycomb pigment networks and irregular borders that dermatologists and deep networks need to spot malignancy.
 
-## Dataset
+---
 
-This project uses the [HAM10000 dataset](https://www.nature.com/articles/sdata2018161).
+## 🛠️ Key Technical Innovations (Version 2)
 
-Download the dataset and place the following files and directories in the working directory:
+### 1. Leakage-Free Stratified Lesion Splitting
+* Grouped strictly by `lesion_id` before partitioning: 70% Train (5,229 lesions / 6,981 images), 15% Validation (1,120 lesions / 1,532 images), and 15% Test (1,121 lesions / 1,502 images).
+* Guaranteed **0 lesion overlap** across train, validation, and test sets.
+
+### 2. Handling 58:1 Class Imbalance
+* Implemented a training-only `WeightedRandomSampler` using inverse class frequencies ($w_c = \frac{N}{7 \cdot N_c}$), ensuring minority classes like Dermatofibroma (`df`) and Vascular lesions (`vasc`) are sampled regularly.
+* Utilized **Label Smoothing (0.1)** to soften overconfident predictions on majority classes.
+
+### 3. Fair Optimization & Modern Training Recipes
+* **ViT-B/16 (`timm`):** Trained with AdamW ($lr = 2 \times 10^{-5}$, weight decay = $0.05$), stochastic depth (`drop_path_rate=0.1`), 3-epoch linear warmup, and cosine annealing over 25 epochs.
+* **ResNet-50:** Trained with AdamW ($lr = 10^{-4}$ on backbone, $10^{-3}$ on classification head, weight decay = $0.01$) and cosine annealing.
+* **Early Stopping:** Monitored on **Validation Macro F1-score**, preventing validation loss bias.
+
+### 4. Clinical Safety Calibration (Melanoma Threshold Tuning)
+In oncology, a False Negative (missing a melanoma) is catastrophic. By sweeping the decision threshold on validation probabilities, setting a **0.05 threshold** dramatically raised Melanoma Recall:
+* **ResNet-50 Melanoma Recall:** Jumped from **46.71% $\rightarrow$ 76.65%**
+* **ViT-B/16 Melanoma Recall:** Jumped from **60.48% $\rightarrow$ 74.85%**
+
+---
+
+## 📊 Visualizations & Explainability (XAI)
+
+### Confusion Matrices
+Both models evaluated on the official test set (1,502 images):
+<p align="center">
+  <img src="results/figures/test_confusion_matrices.png" width="85%" alt="Confusion Matrices" />
+</p>
+
+### Precision-Recall Curves (Melanoma)
+ViT demonstrates superior area under the Precision-Recall curve (AP = 0.6348 vs. ResNet's 0.5836):
+<p align="center">
+  <img src="results/figures/test_melanoma_pr_curves.png" width="70%" alt="Melanoma PR Curves" />
+</p>
+
+### Explainable AI on Critical Misses (Melanoma predicted as Nevus)
+Inspecting 8 shared false-negative cases using **Grad-CAM** (`layer4[-1]`) on ResNet-50 and **Multi-Head Self-Attention rollout** on ViT-B/16:
+<p align="center">
+  <img src="results/figures/task9_mel_to_nv.png" width="85%" alt="Explainability Grad-CAM and ViT Attention" />
+</p>
+*Observation: ResNet concentrates tightly on pigmented core centers or borders, whereas ViT exhibits distributed patch attention that takes broader lesion context and skin transition zones into account.*
+
+---
+
+## 🧪 Preprocessing Ablation Study
+
+Does heavy classical preprocessing (Gaussian blur, CLAHE, hair removal) help deep neural networks?
+
+| Architecture | Plain Validation Macro F1 | Plain Melanoma Recall | Preprocessed Validation Macro F1 | Preprocessed Melanoma Recall |
+|---|:---:|:---:|:---:|:---:|
+| **ResNet-50** | **0.7075** | 61.27% | 0.6466 | **71.10%** |
+| **ViT-B/16** | **0.7339** | **68.21%** | 0.7015 | 58.38% |
+
+**Conclusion:** Deep networks perform best on **raw, uncorrupted images with spatial/color data augmentations**. Handcrafted filters degrade feature extraction by eroding microscopic textural cues.
+
+---
+
+## 📁 Repository Structure
 
 ```text
-HAM10000_metadata.csv
+├── data/                               # Dataset splits and metadata
+│   ├── HAM10000_metadata.csv           # Original metadata
+│   ├── split_train.csv                 # 70% lesion-stratified train split
+│   ├── split_val.csv                   # 15% lesion-stratified validation split
+│   └── split_test.csv                  # 15% lesion-stratified test split
+├── results/
+│   └── figures/                        # Evaluation plots and attention maps
+│       ├── test_confusion_matrices.png
+│       ├── test_melanoma_pr_curves.png
+│       ├── task9_mel_to_nv.png
+│       ├── vit_fair_curves.png
+│       └── resnet_sampler_curves.png
+├── scripts/                            # Standalone Python CLI scripts
+│   ├── train_vit.py                    # Train ViT-B/16 with warmup and sampler
+│   ├── train_resnet.py                 # Train ResNet-50 with differential LR
+│   └── evaluate_preprocessing_ablation.py  # Ablation study pipeline
+├── skincancer.ipynb                    # Version 1 baseline exploration notebook
+├── skincancer_v2.ipynb                 # Version 2 complete 11-step experimental pipeline
+├── .gitignore
+└── README.md
+```
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation
+Clone the repository and install dependencies:
+```bash
+git clone https://github.com/HeerRana/SkinLessionClassification.git
+cd SkinLessionClassification
+pip install torch torchvision timm scikit-learn pandas numpy matplotlib opencv-python pillow
+```
+
+### 2. Dataset Setup
+Download the [HAM10000 dataset](https://www.kaggle.com/datasets/kmader/skin-cancer-mnist-ham10000) from Kaggle or Harvard Dataverse. Unpack the image folders into the repository root:
+```text
 HAM10000_images_part_1/
 HAM10000_images_part_2/
 ```
 
-The HAM10000 dataset contains 10,015 dermoscopic images.
-
-The revised workflow generates the following split files:
-
-```text
-split_train.csv
-split_val.csv
-split_test.csv
-```
-
-Each split contains:
-
-- `lesion_id`
-- `image_id`
-- `dx`
-- `path`
-
-The dataset is split by `lesion_id` rather than by individual image. This prevents images from the same lesion from appearing in multiple splits.
-
-## Installation
-
-Python 3.9 or newer is recommended.
-
-Create and activate a virtual environment:
-
-```bash
-python -m venv .venv
-```
-
-On macOS or Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-On Windows:
-
-```powershell
-.venv\Scripts\activate
-```
-
-Install the required dependencies:
-
-```bash
-python -m pip install --upgrade pip
-pip install torch torchvision torchaudio pandas numpy pillow scikit-learn matplotlib opencv-python timm jupyter
-```
-
-For GPU training, install the PyTorch version appropriate for your CUDA version from the [official PyTorch installation instructions](https://pytorch.org/get-started/locally/).
-
-## Usage
-
-### 1. Prepare the Dataset
-
-Place the HAM10000 metadata file and image folders in the expected location:
-
-```text
-HAM10000_metadata.csv
-HAM10000_images_part_1/
-HAM10000_images_part_2/
-```
-
-### 2. Generate the Data Splits
-
-Open `skincancer_v2.ipynb` and run the lesion-level split section.
-
-The split process verifies:
-
-- All 10,015 metadata rows are present.
-- All image paths are valid.
-- No image paths are missing.
-- No lesion appears in more than one split.
-- All diagnosis labels are recognized.
-
-The default split uses:
-
-- 70% of lesions for training.
-- 15% of lesions for validation.
-- 15% of lesions for testing.
-- `random_state=42`.
-
-### 3. Run the Notebook
-
-Start Jupyter Notebook from the repository root:
-
-```bash
-jupyter notebook
-```
-
-Open one of the following notebooks:
-
-```text
-skincancer.ipynb
-skincancer_v2.ipynb
-```
-
-The revised notebook documents:
-
-1. Baseline experiments.
-2. Lesion-level splitting.
-3. Image preprocessing.
-4. Class balancing.
-5. ResNet50 training.
-6. ViT-B/16 training.
-7. Model evaluation.
-8. Preprocessing ablation experiments.
-
-### 4. Run the Scripts
-
-After generating the split CSV files, the scripts can be run directly:
-
-```bash
-python _run_vit.py
-python _run_task10.py
-```
-
-The scripts automatically use CUDA when available:
-
-```python
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-```
-
-If GPU memory is insufficient, reduce the batch size in the relevant script.
-
-## Methodology
-
-### Data Splitting
-
-The revised pipeline groups images by `lesion_id` before splitting. This helps prevent data leakage caused by images from the same lesion appearing in multiple partitions.
-
-The split is stratified by diagnosis where possible.
-
-### Image Transformations
-
-Training images are resized to `224 × 224` and augmented using:
-
-- Random horizontal flipping.
-- Random rotation up to 20 degrees.
-- Color jitter.
-- Conversion to tensors.
-- ImageNet normalization.
-
-Validation and test images use resizing and ImageNet normalization without random augmentation.
-
-### Class Balancing
-
-HAM10000 is highly imbalanced, with the `nv` class representing a large portion of the dataset.
-
-To reduce the effect of class imbalance, the training pipeline can use:
-
-- `WeightedRandomSampler`.
-- Label smoothing.
-- Balanced accuracy.
-- Macro F1.
-- Melanoma-specific recall.
-
-### Optional Image Preprocessing
-
-The Task 10 experiment includes an optional preprocessing pipeline:
-
-1. Resize the image to `224 × 224`.
-2. Apply Gaussian smoothing.
-3. Enhance contrast using CLAHE in the LAB color space.
-4. Detect hair artifacts using morphological black-hat processing.
-5. Remove detected hair artifacts using Telea inpainting.
-
-The preprocessing experiment compares models trained with plain images against models trained with preprocessed images.
-
-## Models
-
-### ResNet50
-
-The ResNet50 pipeline uses:
-
-- ImageNet-pretrained weights.
-- A new seven-class fully connected output layer.
-- AdamW optimization.
-- Separate learning rates for the backbone and classifier head.
-- Cosine annealing learning-rate scheduling.
-- Early stopping based on validation macro F1.
-
-### ViT-B/16
-
-The ViT-B/16 pipeline uses:
-
-- The `vit_base_patch16_224` model from `timm`.
-- ImageNet-pretrained weights.
-- Seven output classes.
-- AdamW optimization.
-- Linear warm-up.
-- Cosine annealing learning-rate scheduling.
-- Drop-path regularization.
-- Early stopping based on validation macro F1.
-
-## Evaluation Metrics
-
-The project reports the following metrics:
-
-- Accuracy.
-- Balanced accuracy.
-- Macro F1.
-- Weighted F1.
-- Per-class precision.
-- Per-class recall.
-- Per-class F1 score.
-- Melanoma recall.
-- Melanoma average precision where available.
-- Confusion matrices and common confusion pairs.
-
-Accuracy should not be interpreted in isolation because the dataset is strongly imbalanced. Macro F1 and melanoma recall provide a more informative view of performance across classes.
-
-## Reference Results
-
-The revised notebook records the following plain-image validation results:
-
-| Model | Validation Accuracy | Validation Macro F1 |
-|---|---:|---:|
-| ResNet50 | 0.8303 | 0.7075 |
-| ViT-B/16 | 0.8492 | 0.7339 |
-
-These values are experiment records from the notebook. Results may vary depending on:
-
-- Hardware.
-- CUDA and PyTorch versions.
-- Random seeds.
-- Dataset paths.
-- Batch size.
-- Available GPU memory.
-- Library versions.
-
-The preprocessing ablation results are evaluated separately and should not be treated as identical to the plain-image baseline.
-
-## Generated Checkpoints and Outputs
-
-Training may generate files such as:
-
-```text
-best_resnet_fair.pth
-best_resnet_sampler.pth
-best_resnet_preproc.pth
-best_vit_fair.pth
-best_vit_preproc.pth
-resnet_fair_curves.png
-resnet_sampler_curves.png
-vit_fair_curves.png
-```
-
-Model checkpoints and generated outputs are ignored by Git because they may be large. Store them locally or in an external artifact repository if they need to be preserved.
-
-## Reproducibility
-
-For more reproducible results:
-
-- Use the lesion-level split from `skincancer_v2.ipynb`.
-- Keep the label order fixed.
-- Use the same `random_state`.
-- Record Python, PyTorch, torchvision, timm, and CUDA versions.
-- Record the hardware used for training.
-- Set random seeds where appropriate.
-- Avoid mixing the original image-level split with the revised lesion-level split.
-- Do not evaluate the test set repeatedly during model development.
-
-## Citation
-
-If you use the HAM10000 dataset, cite the original publication:
-
-> Tschandl, P., Rosendahl, C. & Kittler, H. The HAM10000 dataset, a large collection of multi-source dermatoscopic images of common pigmented skin lesions. *Scientific Data* 5, 180161 (2018).  
-> https://doi.org/10.1038/sdata.2018.161
-
-## License
-
-No license is currently specified for this repository.
-
-Add a `LICENSE` file before distributing the code or granting permissions for reuse.
-
-## Contributing
-
-Issues and pull requests are welcome.
-
-When proposing changes, please include:
-
-- The experiment or preprocessing configuration.
-- The dataset split used.
-- The random seed.
-- Validation metrics, especially macro F1 and melanoma recall.
-- Hardware and software versions where relevant.
-- Any changes to preprocessing or class balancing.
+### 3. Running Experiments
+* **Jupyter Notebook:** Open `skincancer_v2.ipynb` to step through the entire 11-task workflow with interactive charts and reports.
+* **CLI Training (ViT-B/16):**
+  ```bash
+  python scripts/train_vit.py
+  ```
+* **CLI Training (ResNet-50):**
+  ```bash
+  python scripts/train_resnet.py
+  ```
+* **Run Preprocessing Ablation Study:**
+  ```bash
+  python scripts/evaluate_preprocessing_ablation.py
+  ```
+
+---
+
+## 📜 Citation & References
+
+* **HAM10000 Dataset:** Tschandl, P., Rosendahl, C. & Kittler, H. *The HAM10000 dataset, a large collection of multi-source dermatoscopic images of common pigmented skin lesions.* Sci. Data 5, 180161 (2018).
+* **Vision Transformers:** Dosovitskiy et al., *An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale*, ICLR 2021.
+* **ResNet:** He et al., *Deep Residual Learning for Image Recognition*, CVPR 2016.
